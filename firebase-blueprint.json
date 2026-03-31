@@ -1,0 +1,44 @@
+{
+  "entities": {
+    "DailyData": {
+      "title": "DailyData",
+      "description": "Datos diarios de operaciones, auditoría y rendimiento cognitivo.",
+      "type": "object",
+      "properties": {
+        "date": { "type": "string", "format": "date" },
+        "morningInput": {
+          "type": "object",
+          "properties": {
+            "agenda": { "type": "string" },
+            "tasks": { "type": "string" },
+            "energy": { "type": "string" },
+            "pending": { "type": "string" }
+          }
+        },
+        "morningOutput": { "type": "string" },
+        "noNegociables": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": { "type": "string" },
+              "text": { "type": "string" },
+              "completed": { "type": "boolean" }
+            }
+          }
+        },
+        "cognitiveChecklist": { "type": "object" },
+        "nightInput": { "type": "string" },
+        "nightOutput": { "type": "string" },
+        "score": { "type": "number" }
+      },
+      "required": ["date", "cognitiveChecklist"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}/history/{date}": {
+      "schema": "DailyData",
+      "description": "Historial diario del usuario."
+    }
+  }
+}
