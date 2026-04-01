@@ -47,7 +47,7 @@ import { DailyData, COGNITIVE_STEPS, AppState, DOCTRINA_OPERATIVA } from './type
 import { generateMorningPlan, generateNightAudit } from './lib/gemini';
 
 // --- Auth Component ---
-const AuthScreen = ({ onLogin }: { onLogin: () => void }) => (
+const AuthScreen = ({ onLogin, loading, error }: { onLogin: () => void, loading: boolean, error: string | null }) => (
   <div className="min-h-screen bg-[#E4E3E0] flex items-center justify-center p-6">
     <motion.div 
       initial={{ opacity: 0, y: 20 }}
@@ -61,12 +61,21 @@ const AuthScreen = ({ onLogin }: { onLogin: () => void }) => (
       <p className="text-sm opacity-70 leading-relaxed">
         Bienvenido al centro de mando. Para sincronizar tu doctrina y auditorías en la nube, por favor identifícate.
       </p>
+      
+      {error && (
+        <div className="bg-red-50 border border-red-200 p-3 text-red-600 text-[10px] font-mono uppercase text-left">
+          Error: {error}
+          {error.includes('popup-closed-by-user') ? '' : ' - Asegúrate de permitir las ventanas emergentes (popups) en tu navegador.'}
+        </div>
+      )}
+
       <button 
         onClick={onLogin}
-        className="w-full py-4 bg-[#141414] text-[#E4E3E0] font-mono text-xs uppercase tracking-widest hover:bg-[#141414]/90 transition-all flex items-center justify-center gap-3"
+        disabled={loading}
+        className="w-full py-4 bg-[#141414] text-[#E4E3E0] font-mono text-xs uppercase tracking-widest hover:bg-[#141414]/90 transition-all flex items-center justify-center gap-3 disabled:opacity-50"
       >
-        <TrendingUp size={16} />
-        Iniciar con Google
+        {loading ? <Loader2 className="animate-spin" size={16} /> : <TrendingUp size={16} />}
+        {loading ? 'Iniciando...' : 'Iniciar con Google'}
       </button>
     </motion.div>
   </div>
@@ -237,12 +246,18 @@ export default function App() {
     };
   });
   const [loading, setLoading] = useState(false);
+  const [authLoading, setAuthLoading] = useState(false);
+  const [authError, setAuthError] = useState<string | null>(null);
 
   // Auth Listener
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (u) => {
       setUser(u);
       setIsAuthReady(true);
+      if (u) {
+        setAuthLoading(false);
+        setAuthError(null);
+      }
     });
     return () => unsubscribe();
   }, []);
@@ -277,10 +292,14 @@ export default function App() {
   }, [user]);
 
   const handleLogin = async () => {
+    setAuthLoading(true);
+    setAuthError(null);
     try {
       await signInWithPopup(auth, googleProvider);
-    } catch (error) {
+    } catch (error: any) {
       console.error("Login Error:", error);
+      setAuthError(error.message || "Error al iniciar sesión");
+      setAuthLoading(false);
     }
   };
 
@@ -365,7 +384,7 @@ export default function App() {
     </div>
   );
 
-  if (!user) return <AuthScreen onLogin={handleLogin} />;
+  if (!user) return <AuthScreen onLogin={handleLogin} loading={authLoading} error={authError} />;
 
   const toggleCognitive = (id: string) => {
     const newChecklist = {
