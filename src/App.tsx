@@ -63,9 +63,16 @@ const AuthScreen = ({ onLogin, loading, error }: { onLogin: () => void, loading:
       </p>
       
       {error && (
-        <div className="bg-red-50 border border-red-200 p-3 text-red-600 text-[10px] font-mono uppercase text-left">
-          Error: {error}
-          {error.includes('popup-closed-by-user') ? '' : ' - Asegúrate de permitir las ventanas emergentes (popups) en tu navegador.'}
+        <div className="bg-red-50 border border-red-200 p-4 text-red-600 text-[10px] font-mono uppercase text-left space-y-2">
+          <p className="font-bold">Error detectado:</p>
+          <p>{error}</p>
+          <div className="pt-2 border-t border-red-100 mt-2">
+            <p className="opacity-70">Si estás desplegando en Vercel:</p>
+            <ol className="list-decimal ml-4 mt-1 space-y-1 opacity-70">
+              <li>Ve a Firebase Console &gt; Authentication &gt; Settings</li>
+              <li>Añade tu dominio de Vercel a "Authorized Domains"</li>
+            </ol>
+          </div>
         </div>
       )}
 
@@ -295,10 +302,24 @@ export default function App() {
     setAuthLoading(true);
     setAuthError(null);
     try {
-      await signInWithPopup(auth, googleProvider);
+      console.log("Iniciando signInWithPopup...");
+      const result = await signInWithPopup(auth, googleProvider);
+      console.log("Login exitoso:", result.user.email);
+      setUser(result.user);
+      setAuthLoading(false);
     } catch (error: any) {
-      console.error("Login Error:", error);
-      setAuthError(error.message || "Error al iniciar sesión");
+      console.error("Login Error completo:", error);
+      let friendlyMessage = error.message;
+      
+      if (error.code === 'auth/popup-blocked') {
+        friendlyMessage = "El navegador bloqueó la ventana de inicio de sesión. Por favor, permite los popups.";
+      } else if (error.code === 'auth/popup-closed-by-user') {
+        friendlyMessage = "Cerraste la ventana antes de completar el inicio de sesión.";
+      } else if (error.code === 'auth/unauthorized-domain') {
+        friendlyMessage = "Este dominio no está autorizado en Firebase. Si estás en Vercel, añade tu dominio en la consola de Firebase.";
+      }
+      
+      setAuthError(friendlyMessage || "Error al iniciar sesión");
       setAuthLoading(false);
     }
   };
