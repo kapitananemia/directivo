@@ -51,7 +51,8 @@ import {
   User,
   handleFirestoreError,
   OperationType,
-  deleteField
+  deleteField,
+  updateDoc
 } from './firebase';
 import { DailyData, COGNITIVE_STEPS, AppState, DOCTRINA_OPERATIVA } from './types';
 import { generateMorningPlan, generateNightAudit } from './lib/gemini';
@@ -313,7 +314,7 @@ export default function App() {
           ...history,
           [today]: history[today] || { date: today, cognitiveChecklist: {}, noNegociables: [] }
         },
-        currentDate: today
+        currentDate: prev.currentDate || today
       }));
     }, (error) => {
       handleFirestoreError(error, OperationType.GET, `users/${user.uid}/history`);
@@ -362,11 +363,48 @@ export default function App() {
   const updateCurrentDay = async (updates: Partial<DailyData>) => {
     if (!user) return;
     
-    const newData = { ...currentDay, ...updates };
     const docRef = doc(db, 'users', user.uid, 'history', state.currentDate);
     
     try {
-      await setDoc(docRef, newData);
+      // Check if we are deleting fields
+      const isDeleting = Object.values(updates).some(v => 
+        v && typeof v === 'object' && 'methodName' in v && (v as any).methodName === 'FieldValue.delete'
+      );
+      if (isDeleting) {
+        await updateDoc(docRef, updates as any);
+      } else {
+        const newData = { ...currentDay, ...updates };
+        await setDoc(docRef, newData);
+      }
+    } catch (error) {
+      handleFirestoreError(error, OperationType.WRITE, docRef.path);
+    }
+  };
+
+  const resetCurrentDay = async (type: 'morning' | 'night') => {
+    if (!user) return;
+    const docRef = doc(db, 'users', user.uid, 'history', state.currentDate);
+    try {
+      if (type === 'morning') {
+        await updateDoc(docRef, {
+          morningOutput: deleteField(),
+          morningInput: deleteField(),
+          noNegociables: deleteField()
+        });
+        ['agenda-input', 'tasks-input', 'pending-input'].forEach(id => {
+          const el = document.getElementById(id) as HTMLTextAreaElement;
+          if (el) el.value = '';
+        });
+      } else {
+        await updateDoc(docRef, {
+          nightOutput: deleteField(),
+          nightInput: deleteField(),
+          score: deleteField(),
+          burnoutRisk: deleteField()
+        });
+        const el = document.getElementById('day-log-input') as HTMLTextAreaElement;
+        if (el) el.value = '';
+      }
     } catch (error) {
       handleFirestoreError(error, OperationType.WRITE, docRef.path);
     }
@@ -769,11 +807,7 @@ const ImpactMatrix = ({ tasks, matrix, onChange }: {
                     <div className="flex justify-between items-start mb-6 border-b border-[#141414]/10 pb-4">
                       <span className="font-mono text-[10px] uppercase bg-[#141414] text-[#E4E3E0] px-2 py-1">Plan de Operaciones</span>
                       <button 
-                        onClick={() => updateCurrentDay({ 
-                          morningOutput: deleteField() as any,
-                          morningInput: deleteField() as any,
-                          noNegociables: deleteField() as any
-                        })}
+                        onClick={() => resetCurrentDay('morning')}
                         className="text-[10px] font-mono uppercase opacity-50 hover:opacity-100 underline"
                       >
                         Reiniciar
@@ -935,12 +969,7 @@ const ImpactMatrix = ({ tasks, matrix, onChange }: {
                     <div className="flex justify-between items-start mb-6 border-b border-[#141414]/10 pb-4">
                       <span className="font-mono text-[10px] uppercase bg-[#141414] text-[#E4E3E0] px-2 py-1">Informe de Auditoría</span>
                       <button 
-                        onClick={() => updateCurrentDay({ 
-                          nightOutput: deleteField() as any,
-                          nightInput: deleteField() as any,
-                          score: deleteField() as any,
-                          burnoutRisk: deleteField() as any
-                        })}
+                        onClick={() => resetCurrentDay('night')}
                         className="text-[10px] font-mono uppercase opacity-50 hover:opacity-100 underline"
                       >
                         Nueva Auditoría
