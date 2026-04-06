@@ -15,9 +15,20 @@ export interface DailyData {
   cognitiveChecklist: {
     [key: string]: boolean;
   };
+  deepWorkSessions?: {
+    startTime: number;
+    duration: number; // minutes
+    focusQuality: number; // 1-10
+  }[];
+  impactMatrix?: {
+    taskId: string;
+    impact: 'high' | 'low';
+    effort: 'high' | 'low';
+  }[];
   nightInput?: string;
   nightOutput?: string;
   score?: number; // Extracted score 1-5
+  burnoutRisk?: number; // 0-100
 }
 
 export interface AppState {

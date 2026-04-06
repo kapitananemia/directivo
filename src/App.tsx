@@ -15,7 +15,14 @@ import {
   BarChart3,
   Info,
   BookOpen,
-  X
+  X,
+  Timer,
+  Target,
+  Zap,
+  AlertTriangle,
+  LogOut,
+  Circle,
+  Activity
 } from 'lucide-react';
 import { 
   LineChart, 
@@ -26,7 +33,9 @@ import {
   Tooltip, 
   ResponsiveContainer,
   AreaChart,
-  Area
+  Area,
+  ComposedChart,
+  Bar
 } from 'recharts';
 import { 
   db, 
@@ -47,7 +56,7 @@ import { DailyData, COGNITIVE_STEPS, AppState, DOCTRINA_OPERATIVA } from './type
 import { generateMorningPlan, generateNightAudit } from './lib/gemini';
 
 // --- Auth Component ---
-const AuthScreen = ({ onLogin, loading, error }: { onLogin: () => void, loading: boolean, error: string | null }) => (
+const AuthScreen = ({ onLogin, loading, error }: { onLogin: (useRedirect?: boolean) => void, loading: boolean, error: string | null }) => (
   <div className="min-h-screen bg-[#E4E3E0] flex items-center justify-center p-6">
     <motion.div 
       initial={{ opacity: 0, y: 20 }}
@@ -76,14 +85,24 @@ const AuthScreen = ({ onLogin, loading, error }: { onLogin: () => void, loading:
         </div>
       )}
 
-      <button 
-        onClick={onLogin}
-        disabled={loading}
-        className="w-full py-4 bg-[#141414] text-[#E4E3E0] font-mono text-xs uppercase tracking-widest hover:bg-[#141414]/90 transition-all flex items-center justify-center gap-3 disabled:opacity-50"
-      >
-        {loading ? <Loader2 className="animate-spin" size={16} /> : <TrendingUp size={16} />}
-        {loading ? 'Iniciando...' : 'Iniciar con Google'}
-      </button>
+      <div className="flex flex-col gap-2">
+        <button 
+          onClick={() => onLogin(false)}
+          disabled={loading}
+          className="w-full py-4 bg-[#141414] text-[#E4E3E0] font-mono text-xs uppercase tracking-widest hover:bg-[#141414]/90 transition-all flex items-center justify-center gap-3 disabled:opacity-50"
+        >
+          {loading ? <Loader2 className="animate-spin" size={16} /> : <TrendingUp size={16} />}
+          {loading ? 'Iniciando...' : 'Iniciar con Google (Popup)'}
+        </button>
+        <button 
+          onClick={() => onLogin(true)}
+          disabled={loading}
+          className="w-full py-4 border border-[#141414] text-[#141414] font-mono text-xs uppercase tracking-widest hover:bg-[#141414]/5 transition-all flex items-center justify-center gap-3 disabled:opacity-50"
+        >
+          {loading ? <Loader2 className="animate-spin" size={16} /> : <ChevronRight size={16} />}
+          {loading ? 'Redirigiendo...' : 'Usar Redirección (Si falla el popup)'}
+        </button>
+      </div>
     </motion.div>
   </div>
 );
@@ -227,11 +246,15 @@ const SpeechInput = ({ onTranscript, placeholder }: { onTranscript: (text: strin
   );
 };
 
-// --- Helper to extract score ---
-const extractScore = (text: string): number | undefined => {
-  const match = text.match(/Puntuación final del día del (\d) al 5/i) || text.match(/Puntuación: (\d)\/5/i) || text.match(/(\d)\/5/i);
-  if (match) return parseInt(match[1]);
-  return undefined;
+// --- Helper to extract metrics ---
+const extractMetrics = (text: string): { score: number, burnout: number } => {
+  const scoreMatch = text.match(/PUNTUACION:\s*\[?(\d)\]?/i) || text.match(/Puntuación: (\d)\/5/i) || text.match(/(\d)\/5/i);
+  const burnoutMatch = text.match(/RIESGO_BURNOUT:\s*\[?(\d+)\]?/i);
+  
+  return {
+    score: scoreMatch ? parseInt(scoreMatch[1]) * 20 : 0,
+    burnout: burnoutMatch ? parseInt(burnoutMatch[1]) : 0
+  };
 };
 
 export default function App() {
@@ -298,21 +321,26 @@ export default function App() {
     return () => unsubscribe();
   }, [user]);
 
-  const handleLogin = async () => {
+  const handleLogin = async (useRedirect = false) => {
     setAuthLoading(true);
     setAuthError(null);
     try {
-      console.log("Iniciando signInWithPopup...");
-      const result = await signInWithPopup(auth, googleProvider);
-      console.log("Login exitoso:", result.user.email);
-      setUser(result.user);
-      setAuthLoading(false);
+      if (useRedirect) {
+        const { signInWithRedirect } = await import('firebase/auth');
+        await signInWithRedirect(auth, googleProvider);
+      } else {
+        console.log("Iniciando signInWithPopup...");
+        const result = await signInWithPopup(auth, googleProvider);
+        console.log("Login exitoso:", result.user.email);
+        setUser(result.user);
+        setAuthLoading(false);
+      }
     } catch (error: any) {
       console.error("Login Error completo:", error);
       let friendlyMessage = error.message;
       
       if (error.code === 'auth/popup-blocked') {
-        friendlyMessage = "El navegador bloqueó la ventana de inicio de sesión. Por favor, permite los popups.";
+        friendlyMessage = "El navegador bloqueó la ventana de inicio de sesión. Por favor, permite los popups o usa el botón de 'Redirección'.";
       } else if (error.code === 'auth/popup-closed-by-user') {
         friendlyMessage = "Cerraste la ventana antes de completar el inicio de sesión.";
       } else if (error.code === 'auth/unauthorized-domain') {
@@ -363,6 +391,11 @@ export default function App() {
 
     setLoading(true);
     try {
+      const apiKey = process.env.GEMINI_API_KEY;
+      if (!apiKey || apiKey === "undefined") {
+        throw new Error("La clave API de Gemini no está configurada. Por favor, añádela en los Secretos de AI Studio.");
+      }
+
       const historyContext = getHistoryContext();
       const { text, noNegociables } = await generateMorningPlan(
         morningInput.agenda,
@@ -372,9 +405,21 @@ export default function App() {
         historyContext
       );
       await updateCurrentDay({ morningInput, morningOutput: text, noNegociables });
-    } catch (error) {
-      console.error(error);
-      alert('Error generando plan.');
+    } catch (error: any) {
+      console.error("Error generating morning plan:", error);
+      let message = "Error desconocido al generar el plan.";
+      
+      if (error.message) {
+        message = error.message;
+      }
+      
+      if (message.includes("API key not valid")) {
+        message = "La clave API de Gemini no es válida. Por favor, revísala.";
+      } else if (message.includes("quota exceeded")) {
+        message = "Has superado el límite de uso de la API de Gemini. Inténtalo de nuevo más tarde.";
+      }
+      
+      alert(`Error: ${message}`);
     } finally {
       setLoading(false);
     }
@@ -387,13 +432,35 @@ export default function App() {
 
     setLoading(true);
     try {
+      const apiKey = process.env.GEMINI_API_KEY;
+      if (!apiKey || apiKey === "undefined") {
+        throw new Error("La clave API de Gemini no está configurada. Por favor, añádela en los Secretos de AI Studio.");
+      }
+
       const historyContext = getHistoryContext();
       const output = await generateNightAudit(log, historyContext);
-      const score = extractScore(output) ? extractScore(output)! * 20 : 0;
-      await updateCurrentDay({ nightInput: log, nightOutput: output, score });
-    } catch (error) {
-      console.error(error);
-      alert('Error generando auditoría.');
+      const { score, burnout } = extractMetrics(output);
+      await updateCurrentDay({ 
+        nightInput: log, 
+        nightOutput: output, 
+        score,
+        burnoutRisk: burnout
+      });
+    } catch (error: any) {
+      console.error("Error generating night audit:", error);
+      let message = "Error desconocido al generar la auditoría.";
+      
+      if (error.message) {
+        message = error.message;
+      }
+      
+      if (message.includes("API key not valid")) {
+        message = "La clave API de Gemini no es válida. Por favor, revísala.";
+      } else if (message.includes("quota exceeded")) {
+        message = "Has superado el límite de uso de la API de Gemini. Inténtalo de nuevo más tarde.";
+      }
+      
+      alert(`Error: ${message}`);
     } finally {
       setLoading(false);
     }
@@ -405,7 +472,144 @@ export default function App() {
     </div>
   );
 
-  if (!user) return <AuthScreen onLogin={handleLogin} loading={authLoading} error={authError} />;
+const DeepWorkTimer = ({ onComplete }: { onComplete: (duration: number, quality: number) => void }) => {
+  const [isActive, setIsActive] = useState(false);
+  const [seconds, setSeconds] = useState(0);
+  const [showRating, setShowRating] = useState(false);
+
+  useEffect(() => {
+    let interval: any = null;
+    if (isActive) {
+      interval = setInterval(() => {
+        setSeconds(s => s + 1);
+      }, 1000);
+    } else {
+      clearInterval(interval);
+    }
+    return () => clearInterval(interval);
+  }, [isActive]);
+
+  const formatTime = (s: number) => {
+    const mins = Math.floor(s / 60);
+    const secs = s % 60;
+    return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+  };
+
+  const handleStop = () => {
+    setIsActive(false);
+    setShowRating(true);
+  };
+
+  const submitRating = (quality: number) => {
+    onComplete(Math.floor(seconds / 60), quality);
+    setSeconds(0);
+    setShowRating(false);
+  };
+
+  return (
+    <div className="bg-[#141414] text-[#E4E3E0] p-6 rounded-none border border-[#141414] shadow-[8px_8px_0px_0px_rgba(20,20,20,0.2)]">
+      <div className="flex items-center justify-between mb-4">
+        <div className="flex items-center gap-2">
+          <Timer size={18} className={isActive ? "text-orange-500 animate-pulse" : ""} />
+          <span className="font-mono text-[10px] uppercase tracking-widest">Protocolo Deep Work</span>
+        </div>
+        <span className="font-mono text-2xl tabular-nums">{formatTime(seconds)}</span>
+      </div>
+
+      {!showRating ? (
+        <button
+          onClick={() => isActive ? handleStop() : setIsActive(true)}
+          className={`w-full py-3 font-mono text-[10px] uppercase tracking-widest transition-all ${
+            isActive ? "bg-red-900/20 border border-red-900 text-red-400" : "bg-[#E4E3E0] text-[#141414]"
+          }`}
+        >
+          {isActive ? "Finalizar Sesión" : "Iniciar Bloque 90 Min"}
+        </button>
+      ) : (
+        <div className="space-y-3">
+          <p className="font-mono text-[10px] uppercase tracking-widest text-center">Calidad del Foco (1-10)</p>
+          <div className="flex justify-between gap-1">
+            {[2, 4, 6, 8, 10].map(n => (
+              <button
+                key={n}
+                onClick={() => submitRating(n)}
+                className="flex-1 py-2 border border-[#E4E3E0]/30 hover:bg-[#E4E3E0] hover:text-[#141414] transition-all font-mono text-xs"
+              >
+                {n}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+const ImpactMatrix = ({ tasks, matrix, onChange }: { 
+  tasks: { id: string, text: string }[], 
+  matrix: DailyData['impactMatrix'], 
+  onChange: (newMatrix: DailyData['impactMatrix']) => void 
+}) => {
+  const getTaskImpact = (id: string) => matrix?.find(m => m.taskId === id);
+
+  const updateTask = (id: string, impact: 'high' | 'low', effort: 'high' | 'low') => {
+    const filtered = matrix?.filter(m => m.taskId !== id) || [];
+    onChange([...filtered, { taskId: id, impact, effort }]);
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center gap-2 mb-2">
+        <Target size={18} />
+        <span className="font-mono text-[10px] uppercase tracking-widest">Matriz de Impacto Estratégico</span>
+      </div>
+      <div className="grid gap-3">
+        {tasks.map(task => {
+          const m = getTaskImpact(task.id);
+          return (
+            <div key={task.id} className="p-4 border border-[#141414]/10 bg-white/50 space-y-3">
+              <p className="text-xs font-medium">{task.text}</p>
+              <div className="flex gap-4">
+                <div className="space-y-1 flex-1">
+                  <p className="font-mono text-[8px] uppercase opacity-50">Impacto</p>
+                  <div className="flex gap-1">
+                    {['low', 'high'].map(v => (
+                      <button
+                        key={v}
+                        onClick={() => updateTask(task.id, v as any, m?.effort || 'low')}
+                        className={`flex-1 py-1 text-[8px] font-mono uppercase border ${
+                          m?.impact === v ? "bg-[#141414] text-white border-[#141414]" : "border-[#141414]/20"
+                        }`}
+                      >
+                        {v}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <div className="space-y-1 flex-1">
+                  <p className="font-mono text-[8px] uppercase opacity-50">Esfuerzo</p>
+                  <div className="flex gap-1">
+                    {['low', 'high'].map(v => (
+                      <button
+                        key={v}
+                        onClick={() => updateTask(task.id, m?.impact || 'low', v as any)}
+                        className={`flex-1 py-1 text-[8px] font-mono uppercase border ${
+                          m?.effort === v ? "bg-[#141414] text-white border-[#141414]" : "border-[#141414]/20"
+                        }`}
+                      >
+                        {v}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+};
 
   const toggleCognitive = (id: string) => {
     const newChecklist = {
@@ -421,10 +625,13 @@ export default function App() {
     .map(day => {
       const cognitiveCount = Object.values(day.cognitiveChecklist).filter(Boolean).length;
       const cognitivePercent = (cognitiveCount / COGNITIVE_STEPS.length) * 100;
+      const deepWorkTotal = (day.deepWorkSessions || []).reduce((acc, s) => acc + s.duration, 0);
       return {
         date: day.date.split('-').slice(1).join('/'),
         score: day.score || 0,
         cognitive: Math.round(cognitivePercent),
+        burnout: day.burnoutRisk || 0,
+        deepWork: Math.round(deepWorkTotal / 60) // in minutes
       };
     });
 
@@ -591,33 +798,53 @@ export default function App() {
 
               {/* No Negociables Section */}
               {currentDay.noNegociables && currentDay.noNegociables.length > 0 && (
-                <div className="space-y-4">
-                  <h3 className="font-mono text-[10px] uppercase opacity-40 tracking-[0.2em] mb-4">No Negociables del Día</h3>
-                  <div className="grid gap-3">
-                    {currentDay.noNegociables.map((nn) => (
-                      <button
-                        key={nn.id}
-                        onClick={() => {
-                          const newList = currentDay.noNegociables?.map(item => 
-                            item.id === nn.id ? { ...item, completed: !item.completed } : item
-                          );
-                          updateCurrentDay({ noNegociables: newList });
-                        }}
-                        className={`w-full flex items-center gap-4 p-5 border transition-all text-left shadow-[4px_4px_0px_0px_rgba(20,20,20,1)] ${
-                          nn.completed
-                          ? 'bg-green-50 border-green-600 text-green-900 opacity-60'
-                          : 'bg-white border-[#141414] hover:bg-[#141414] hover:text-[#E4E3E0]'
-                        }`}
-                      >
-                        <div className={`w-6 h-6 border flex items-center justify-center transition-colors shrink-0 ${
-                          nn.completed ? 'border-green-600 bg-green-600 text-white' : 'border-[#141414]'
-                        }`}>
-                          {nn.completed && <CheckCircle2 size={16} />}
-                        </div>
-                        <span className="text-sm font-mono tracking-tight font-bold">{nn.text}</span>
-                      </button>
-                    ))}
+                <div className="space-y-8">
+                  <div className="space-y-4">
+                    <div className="flex items-center gap-2">
+                      <Zap size={16} className="text-orange-500" />
+                      <h3 className="font-mono text-[10px] uppercase opacity-40 tracking-[0.2em]">No Negociables del Día</h3>
+                    </div>
+                    <div className="grid gap-3">
+                      {currentDay.noNegociables.map((nn) => (
+                        <button
+                          key={nn.id}
+                          onClick={() => {
+                            const newList = currentDay.noNegociables?.map(item => 
+                              item.id === nn.id ? { ...item, completed: !item.completed } : item
+                            );
+                            updateCurrentDay({ noNegociables: newList });
+                          }}
+                          className={`w-full flex items-center gap-4 p-5 border transition-all text-left shadow-[4px_4px_0px_0px_rgba(20,20,20,1)] ${
+                            nn.completed
+                            ? 'bg-green-50 border-green-600 text-green-900 opacity-60'
+                            : 'bg-white border-[#141414] hover:bg-[#141414] hover:text-[#E4E3E0]'
+                          }`}
+                        >
+                          <div className={`w-6 h-6 border flex items-center justify-center transition-colors shrink-0 ${
+                            nn.completed ? 'border-green-600 bg-green-600 text-white' : 'border-[#141414]'
+                          }`}>
+                            {nn.completed ? <CheckCircle2 size={16} /> : <Circle size={16} className="opacity-20" />}
+                          </div>
+                          <span className="text-sm font-mono tracking-tight font-bold">{nn.text}</span>
+                        </button>
+                      ))}
+                    </div>
                   </div>
+
+                  {/* Deep Work Timer */}
+                  <DeepWorkTimer 
+                    onComplete={(duration, quality) => {
+                      const sessions = [...(currentDay.deepWorkSessions || []), { startTime: Date.now(), duration, focusQuality: quality }];
+                      updateCurrentDay({ deepWorkSessions: sessions });
+                    }} 
+                  />
+
+                  {/* Impact Matrix */}
+                  <ImpactMatrix 
+                    tasks={currentDay.noNegociables.map(n => ({ id: n.id, text: n.text }))}
+                    matrix={currentDay.impactMatrix}
+                    onChange={(newMatrix) => updateCurrentDay({ impactMatrix: newMatrix })}
+                  />
                 </div>
               )}
 
@@ -731,7 +958,7 @@ export default function App() {
                 <p className="text-sm opacity-60 mt-2">Correlación entre Rendimiento Cognitivo y Coherencia Vital.</p>
               </div>
 
-              <div className="grid grid-cols-1 gap-8">
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
                 {/* Correlation Chart */}
                 <div className="bg-white border border-[#141414] p-8 shadow-[12px_12px_0px_0px_rgba(20,20,20,1)]">
                   <div className="flex items-center gap-2 mb-6">
@@ -778,15 +1005,64 @@ export default function App() {
                     </div>
                   </div>
                 </div>
+
+                {/* Burnout & Deep Work Chart */}
+                <div className="bg-white border border-[#141414] p-8 shadow-[12px_12px_0px_0px_rgba(20,20,20,1)]">
+                  <div className="flex items-center gap-2 mb-6">
+                    <Activity size={18} />
+                    <h3 className="font-mono text-xs uppercase tracking-widest">Riesgo Burnout vs Deep Work</h3>
+                  </div>
+                  <div className="h-[300px] w-full">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <ComposedChart data={chartData}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="#14141410" />
+                        <XAxis dataKey="date" fontSize={10} fontStyle="italic" />
+                        <YAxis yAxisId="left" domain={[0, 100]} fontSize={10} />
+                        <YAxis yAxisId="right" orientation="right" fontSize={10} />
+                        <Tooltip 
+                          contentStyle={{ backgroundColor: '#141414', color: '#E4E3E0', border: 'none', fontSize: '10px' }}
+                          itemStyle={{ color: '#E4E3E0' }}
+                        />
+                        <Area 
+                          yAxisId="left"
+                          type="monotone" 
+                          dataKey="burnout" 
+                          name="Riesgo Burnout"
+                          fill="#EF4444" 
+                          stroke="#EF4444"
+                          fillOpacity={0.1}
+                        />
+                        <Bar 
+                          yAxisId="right"
+                          dataKey="deepWork" 
+                          name="Deep Work (min)"
+                          fill="#141414" 
+                          barSize={20}
+                        />
+                      </ComposedChart>
+                    </ResponsiveContainer>
+                  </div>
+                  <div className="mt-4 flex gap-6 justify-center">
+                    <div className="flex items-center gap-2">
+                      <div className="w-3 h-3 bg-[#EF4444] opacity-20"></div>
+                      <span className="font-mono text-[9px] uppercase opacity-60">Riesgo Burnout</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <div className="w-3 h-3 bg-[#141414]"></div>
+                      <span className="font-mono text-[9px] uppercase opacity-60">Deep Work (min)</span>
+                    </div>
+                  </div>
+                </div>
               </div>
 
               {/* Summary Stats */}
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+              <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
                 {[
                   { label: 'Días Registrados', value: Object.keys(state.history).length },
                   { label: 'Media Auditoría', value: (chartData.reduce((acc, curr) => acc + curr.score, 0) / (chartData.filter(d => d.score > 0).length || 1)).toFixed(1) },
                   { label: 'Media Cognitiva', value: (chartData.reduce((acc, curr) => acc + curr.cognitive, 0) / chartData.length).toFixed(0) + '%' },
-                  { label: 'Racha Actual', value: '1 día' },
+                  { label: 'Deep Work Total', value: (chartData.reduce((acc, curr) => acc + curr.deepWork, 0) / 60).toFixed(1) + 'h' },
+                  { label: 'Riesgo Burnout', value: (chartData[chartData.length - 1]?.burnout || 0) + '%' },
                 ].map((stat, i) => (
                   <div key={i} className="bg-white border border-[#141414]/10 p-4 text-center">
                     <span className="font-mono text-[9px] uppercase opacity-50 block mb-1">{stat.label}</span>

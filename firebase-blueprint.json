@@ -28,9 +28,32 @@
           }
         },
         "cognitiveChecklist": { "type": "object" },
+        "deepWorkSessions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "startTime": { "type": "number" },
+              "duration": { "type": "number" },
+              "focusQuality": { "type": "number" }
+            }
+          }
+        },
+        "impactMatrix": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "taskId": { "type": "string" },
+              "impact": { "type": "string", "enum": ["high", "low"] },
+              "effort": { "type": "string", "enum": ["high", "low"] }
+            }
+          }
+        },
         "nightInput": { "type": "string" },
         "nightOutput": { "type": "string" },
-        "score": { "type": "number" }
+        "score": { "type": "number" },
+        "burnoutRisk": { "type": "number" }
       },
       "required": ["date", "cognitiveChecklist"]
     }

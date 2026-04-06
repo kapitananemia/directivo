@@ -40,7 +40,10 @@ service cloud.firestore {
       return data.date is string &&
              data.cognitiveChecklist is map &&
              (!('score' in data) || (data.score is number && data.score >= 0 && data.score <= 100)) &&
-             (!('noNegociables' in data) || data.noNegociables is list);
+             (!('noNegociables' in data) || data.noNegociables is list) &&
+             (!('deepWorkSessions' in data) || data.deepWorkSessions is list) &&
+             (!('impactMatrix' in data) || data.impactMatrix is list) &&
+             (!('burnoutRisk' in data) || (data.burnoutRisk is number && data.burnoutRisk >= 0 && data.burnoutRisk <= 100));
     }
 
     // ===============================================================
