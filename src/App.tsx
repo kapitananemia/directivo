@@ -50,7 +50,8 @@ import {
   onSnapshot, 
   User,
   handleFirestoreError,
-  OperationType
+  OperationType,
+  deleteField
 } from './firebase';
 import { DailyData, COGNITIVE_STEPS, AppState, DOCTRINA_OPERATIVA } from './types';
 import { generateMorningPlan, generateNightAudit } from './lib/gemini';
@@ -768,7 +769,11 @@ const ImpactMatrix = ({ tasks, matrix, onChange }: {
                     <div className="flex justify-between items-start mb-6 border-b border-[#141414]/10 pb-4">
                       <span className="font-mono text-[10px] uppercase bg-[#141414] text-[#E4E3E0] px-2 py-1">Plan de Operaciones</span>
                       <button 
-                        onClick={() => updateCurrentDay({ morningOutput: undefined })}
+                        onClick={() => updateCurrentDay({ 
+                          morningOutput: deleteField() as any,
+                          morningInput: deleteField() as any,
+                          noNegociables: deleteField() as any
+                        })}
                         className="text-[10px] font-mono uppercase opacity-50 hover:opacity-100 underline"
                       >
                         Reiniciar
@@ -930,7 +935,12 @@ const ImpactMatrix = ({ tasks, matrix, onChange }: {
                     <div className="flex justify-between items-start mb-6 border-b border-[#141414]/10 pb-4">
                       <span className="font-mono text-[10px] uppercase bg-[#141414] text-[#E4E3E0] px-2 py-1">Informe de Auditoría</span>
                       <button 
-                        onClick={() => updateCurrentDay({ nightOutput: undefined })}
+                        onClick={() => updateCurrentDay({ 
+                          nightOutput: deleteField() as any,
+                          nightInput: deleteField() as any,
+                          score: deleteField() as any,
+                          burnoutRisk: deleteField() as any
+                        })}
                         className="text-[10px] font-mono uppercase opacity-50 hover:opacity-100 underline"
                       >
                         Nueva Auditoría
