@@ -27,6 +27,7 @@ export interface DailyData {
   }[];
   nightInput?: string;
   nightOutput?: string;
+  cognitiveOutput?: string;
   score?: number; // Extracted score 1-5
   burnoutRisk?: number; // 0-100
 }

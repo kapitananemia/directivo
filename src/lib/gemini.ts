@@ -164,3 +164,44 @@ Este fue mi día: ${dayLog}`,
     throw error;
   }
 }
+
+export async function generateCognitiveAnalysis(checklist: { [key: string]: boolean }, steps: any[]) {
+  try {
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (!apiKey || apiKey === "undefined") {
+      throw new Error("La clave API de Gemini no está configurada correctamente.");
+    }
+
+    const ai = new GoogleGenAI({ apiKey });
+    const completedSteps = steps.filter(s => checklist[s.id]).map(s => s.label);
+    const pendingSteps = steps.filter(s => !checklist[s.id]).map(s => s.label);
+
+    const response = await ai.models.generateContent({
+      model: "gemini-3-flash-preview",
+      contents: `
+Analiza mi rendimiento cognitivo de hoy basado en este checklist de neuroplasticidad:
+
+PASOS COMPLETADOS:
+${completedSteps.length > 0 ? completedSteps.join(', ') : 'Ninguno'}
+
+PASOS PENDIENTES:
+${pendingSteps.length > 0 ? pendingSteps.join(', ') : 'Ninguno'}
+
+Proporciona:
+1. Diagnóstico de mi estado neuroquímico (estimación basada en los pasos).
+2. Impacto en mi toma de decisiones y claridad mental.
+3. Recomendación táctica para mañana para mejorar la neuroplasticidad.
+4. Un "Score de Plasticidad" del 1 al 100.
+
+Sé breve, técnico y directo.`,
+      config: {
+        systemInstruction: "Eres un experto en neurociencia aplicada al alto rendimiento. Tu objetivo es optimizar la neuroplasticidad y el enfoque del usuario.",
+      },
+    });
+    
+    return response.text;
+  } catch (error: any) {
+    console.error("Error in generateCognitiveAnalysis:", error);
+    throw error;
+  }
+}

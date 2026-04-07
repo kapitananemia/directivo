@@ -7,6 +7,7 @@ import {
   CheckCircle2, 
   LayoutDashboard, 
   ChevronRight,
+  ChevronLeft,
   AlertCircle,
   Loader2,
   Mic,
@@ -55,7 +56,8 @@ import {
   updateDoc
 } from './firebase';
 import { DailyData, COGNITIVE_STEPS, AppState, DOCTRINA_OPERATIVA } from './types';
-import { generateMorningPlan, generateNightAudit } from './lib/gemini';
+import { generateMorningPlan, generateNightAudit, generateCognitiveAnalysis } from './lib/gemini';
+import Markdown from 'react-markdown';
 
 // --- Auth Component ---
 const AuthScreen = ({ onLogin, loading, error }: { onLogin: (useRedirect?: boolean) => void, loading: boolean, error: string | null }) => (
@@ -251,7 +253,7 @@ const SpeechInput = ({ onTranscript, placeholder }: { onTranscript: (text: strin
 // --- Helper to extract metrics ---
 const extractMetrics = (text: string): { score: number, burnout: number } => {
   const scoreMatch = text.match(/PUNTUACION:\s*\[?(\d)\]?/i) || text.match(/Puntuación: (\d)\/5/i) || text.match(/(\d)\/5/i);
-  const burnoutMatch = text.match(/RIESGO_BURNOUT:\s*\[?(\d+)\]?/i);
+  const burnoutMatch = text.match(/RIESGO_BURNOUT:\s*\[?(\d+)\]?/i) || text.match(/Riesgo Burnout: (\d+)%/i) || text.match(/(\d+)%/);
   
   return {
     score: scoreMatch ? parseInt(scoreMatch[1]) * 20 : 0,
@@ -381,7 +383,7 @@ export default function App() {
     }
   };
 
-  const resetCurrentDay = async (type: 'morning' | 'night') => {
+  const resetCurrentDay = async (type: 'morning' | 'night' | 'cognitive') => {
     if (!user) return;
     const docRef = doc(db, 'users', user.uid, 'history', state.currentDate);
     try {
@@ -395,7 +397,7 @@ export default function App() {
           const el = document.getElementById(id) as HTMLTextAreaElement;
           if (el) el.value = '';
         });
-      } else {
+      } else if (type === 'night') {
         await updateDoc(docRef, {
           nightOutput: deleteField(),
           nightInput: deleteField(),
@@ -404,10 +406,34 @@ export default function App() {
         });
         const el = document.getElementById('day-log-input') as HTMLTextAreaElement;
         if (el) el.value = '';
+      } else {
+        await updateDoc(docRef, {
+          cognitiveOutput: deleteField()
+        });
       }
     } catch (error) {
       handleFirestoreError(error, OperationType.WRITE, docRef.path);
     }
+  };
+
+  const handleCognitiveAnalysis = async () => {
+    setLoading(true);
+    try {
+      const output = await generateCognitiveAnalysis(currentDay.cognitiveChecklist, COGNITIVE_STEPS);
+      await updateCurrentDay({ cognitiveOutput: output });
+    } catch (error) {
+      console.error("Error generating cognitive analysis:", error);
+      alert("Error al generar el análisis cognitivo.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const changeDate = (offset: number) => {
+    const current = new Date(state.currentDate);
+    current.setDate(current.getDate() + offset);
+    const newDate = current.toISOString().split('T')[0];
+    setState(prev => ({ ...prev, currentDate: newDate }));
   };
 
   const getHistoryContext = () => {
@@ -666,11 +692,12 @@ const ImpactMatrix = ({ tasks, matrix, onChange }: {
       const cognitivePercent = (cognitiveCount / COGNITIVE_STEPS.length) * 100;
       const deepWorkTotal = (day.deepWorkSessions || []).reduce((acc, s) => acc + s.duration, 0);
       return {
-        date: day.date.split('-').slice(1).join('/'),
+        date: day.date, // Keep original date for logic
+        displayDate: day.date.split('-').slice(1).reverse().join('/'), // DD/MM for display
         score: day.score || 0,
         cognitive: Math.round(cognitivePercent),
         burnout: day.burnoutRisk || 0,
-        deepWork: Math.round(deepWorkTotal / 60) // in minutes
+        deepWork: deepWorkTotal
       };
     });
 
@@ -681,9 +708,21 @@ const ImpactMatrix = ({ tasks, matrix, onChange }: {
         <div className="flex items-center gap-4">
           <div>
             <h1 className="font-serif italic text-2xl tracking-tight">Operaciones & Auditoría</h1>
-            <p className="font-mono text-[10px] uppercase opacity-50 tracking-widest mt-1">
-              {new Date().toLocaleDateString('es-ES', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}
-            </p>
+            <div className="flex items-center gap-2 mt-1">
+              <button onClick={() => changeDate(-1)} className="p-1 hover:bg-[#141414]/10 transition-colors">
+                <ChevronLeft size={12} />
+              </button>
+              <p className="font-mono text-[10px] uppercase opacity-50 tracking-widest">
+                {new Date(state.currentDate + 'T00:00:00').toLocaleDateString('es-ES', { weekday: 'short', day: 'numeric', month: 'short' })}
+              </p>
+              <button 
+                onClick={() => changeDate(1)} 
+                disabled={state.currentDate === new Date().toISOString().split('T')[0]}
+                className="p-1 hover:bg-[#141414]/10 transition-colors disabled:opacity-20"
+              >
+                <ChevronRight size={12} />
+              </button>
+            </div>
           </div>
           <button 
             onClick={() => setIsDoctrinaOpen(true)}
@@ -922,6 +961,33 @@ const ImpactMatrix = ({ tasks, matrix, onChange }: {
                   </div>
                 ))}
               </div>
+
+              <div className="pt-12 border-t border-[#141414]/10">
+                {!currentDay.cognitiveOutput ? (
+                  <button 
+                    onClick={handleCognitiveAnalysis}
+                    disabled={loading || Object.values(currentDay.cognitiveChecklist).filter(Boolean).length === 0}
+                    className="w-full bg-[#141414] text-[#E4E3E0] py-4 font-mono uppercase tracking-widest text-sm hover:invert transition-all flex justify-center items-center gap-2 disabled:opacity-20"
+                  >
+                    {loading ? <Loader2 className="animate-spin" size={18} /> : 'Analizar Rendimiento Cognitivo'}
+                  </button>
+                ) : (
+                  <div className="bg-white border border-[#141414] p-8 shadow-[8px_8px_0px_0px_rgba(20,20,20,1)] prose prose-sm max-w-none">
+                    <div className="flex justify-between items-start mb-6 border-b border-[#141414]/10 pb-4">
+                      <span className="font-mono text-[10px] uppercase bg-[#141414] text-[#E4E3E0] px-2 py-1">Análisis de Neuroplasticidad</span>
+                      <button 
+                        onClick={() => resetCurrentDay('cognitive')}
+                        className="text-[10px] font-mono uppercase opacity-50 hover:opacity-100 underline"
+                      >
+                        Nuevo Análisis
+                      </button>
+                    </div>
+                    <div className="whitespace-pre-wrap font-sans text-sm leading-relaxed">
+                      <Markdown>{currentDay.cognitiveOutput}</Markdown>
+                    </div>
+                  </div>
+                )}
+              </div>
             </motion.section>
           )}
 
@@ -1008,7 +1074,7 @@ const ImpactMatrix = ({ tasks, matrix, onChange }: {
                     <ResponsiveContainer width="100%" height="100%">
                       <LineChart data={chartData}>
                         <CartesianGrid strokeDasharray="3 3" stroke="#14141410" />
-                        <XAxis dataKey="date" fontSize={10} fontStyle="italic" />
+                        <XAxis dataKey="displayDate" fontSize={10} fontStyle="italic" />
                         <YAxis domain={[0, 100]} fontSize={10} />
                         <Tooltip 
                           contentStyle={{ backgroundColor: '#141414', color: '#E4E3E0', border: 'none', fontSize: '10px' }}
@@ -1055,7 +1121,7 @@ const ImpactMatrix = ({ tasks, matrix, onChange }: {
                     <ResponsiveContainer width="100%" height="100%">
                       <ComposedChart data={chartData}>
                         <CartesianGrid strokeDasharray="3 3" stroke="#14141410" />
-                        <XAxis dataKey="date" fontSize={10} fontStyle="italic" />
+                        <XAxis dataKey="displayDate" fontSize={10} fontStyle="italic" />
                         <YAxis yAxisId="left" domain={[0, 100]} fontSize={10} />
                         <YAxis yAxisId="right" orientation="right" fontSize={10} />
                         <Tooltip 
@@ -1091,6 +1157,65 @@ const ImpactMatrix = ({ tasks, matrix, onChange }: {
                       <span className="font-mono text-[9px] uppercase opacity-60">Deep Work (min)</span>
                     </div>
                   </div>
+                </div>
+              </div>
+
+              {/* Historical Compliance Table */}
+              <div className="bg-white border border-[#141414] p-8 shadow-[12px_12px_0px_0px_rgba(20,20,20,1)]">
+                <div className="flex items-center gap-2 mb-6">
+                  <CheckCircle2 size={18} />
+                  <h3 className="font-mono text-xs uppercase tracking-widest">Cumplimiento Histórico por Día</h3>
+                </div>
+                <div className="overflow-x-auto">
+                  <table className="w-full font-mono text-[10px] uppercase tracking-tighter">
+                    <thead>
+                      <tr className="border-b border-[#141414]/10">
+                        <th className="text-left py-2 opacity-50">Fecha</th>
+                        <th className="text-center py-2 opacity-50">Rendimiento</th>
+                        <th className="text-center py-2 opacity-50">Auditoría</th>
+                        <th className="text-center py-2 opacity-50">Burnout</th>
+                        <th className="text-center py-2 opacity-50">Deep Work</th>
+                        <th className="text-right py-2 opacity-50">Acción</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {chartData.slice().reverse().map((day, i) => (
+                        <tr key={i} className="border-b border-[#141414]/5 hover:bg-[#141414]/5 transition-colors">
+                          <td className="py-3 font-bold">{day.displayDate}</td>
+                          <td className="text-center">
+                            <div className="flex items-center justify-center gap-1">
+                              <div className="w-12 h-1.5 bg-[#141414]/10 rounded-full overflow-hidden">
+                                <div className="h-full bg-[#141414]" style={{ width: `${day.cognitive}%` }}></div>
+                              </div>
+                              <span>{day.cognitive}%</span>
+                            </div>
+                          </td>
+                          <td className="text-center">
+                            <span className={day.score >= 80 ? 'text-green-600' : day.score >= 60 ? 'text-orange-600' : 'text-red-600'}>
+                              {day.score}/100
+                            </span>
+                          </td>
+                          <td className="text-center">
+                            <span className={day.burnout > 70 ? 'text-red-600 font-bold' : ''}>
+                              {day.burnout}%
+                            </span>
+                          </td>
+                          <td className="text-center">{day.deepWork} min</td>
+                          <td className="text-right">
+                            <button 
+                              onClick={() => {
+                                setState(prev => ({ ...prev, currentDate: day.date }));
+                                setActiveTab('morning');
+                              }}
+                              className="underline opacity-50 hover:opacity-100"
+                            >
+                              Ver Día
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
                 </div>
               </div>
 
